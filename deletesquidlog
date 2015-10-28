@@ -1,0 +1,119 @@
+#!/usr/bin/env python2.7
+#-*- coding:utf-8 -*-
+
+from __future__ import division
+
+import os
+import time
+import os.path
+import commands
+import urllib2
+import smtplib
+import traceback
+import subprocess
+
+from email.mime.text import MIMEText
+
+
+class CleanMgrSquidLog(object):
+        def __init__(self):
+                self.mgr_squid_log_path = '/var/log/squid'
+                self.host_info_url = 'http://www.yoyojacky.com/Servers/getArea/?hostname='
+                self.initilize()
+
+        def initilize(self):
+                self.email_host = 'smtp.qq.com'
+                self.email_port = 25
+                self.email_user = 'myserver@qq.com'
+                self.email_pass = 'test123'
+                self.email_to   = ['tech@yoyojacky.com']
+
+        def is_valid_dir(self, dir_name):
+                """检测目录名是否为 2013_12_16 这种格式"""
+                res = dir_name.split('_')
+                if len(res) != 3: return False
+                try:
+                        map(lambda x:int(x), res)
+                except:
+                        return False
+                return True
+
+
+        def clean_mgr(self, time_delta):
+                """根据时间偏移量删除目录"""
+                if os.path.exists(self.mgr_squid_log_path):
+                        try:
+                                time_point = int(time.time()) - time_delta
+                                dir_list = os.listdir(self.mgr_squid_log_path)
+                                for d in dir_list:
+                                        if self.is_valid_dir(d):
+                                                ts = d.split('_')
+                                                ti = map(lambda x: int(x), ts)
+                                                ti.extend((0,0,0,0,0,0))
+                                                delta = int(time.mktime(tuple(ti)))
+                                                if delta <= time_point:
+                                                        self.del_file_or_dir(d)
+                                        else:
+                                                pass
+                                  except:
+                                msg = traceback.format_exc()
+                                log_time = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))
+                                with open('/var/log/clean_mgr_squid_log.txt', 'a+') as f:
+                                        f.writelines([log_time + '\n', msg + '\n'])
+
+        def del_file_or_dir(self, fd):
+                """接受一个文件或目录名，并删除"""
+                path = os.path.join(self.mgr_squid_log_path, fd) 
+                if os.path.exists(path):
+                        cmd = 'rm -rf ' + path
+                        subprocess.call(cmd, shell=True)
+
+
+        def get_host_info(self):
+                """获取主机名和位置信息"""
+                hostname = commands.getoutput('hostname')
+                url = self.host_info_url + hostname
+                try:
+                        locate = urllib2.urlopen(url).read()
+                except:
+                        locate = ''
+                return (hostname, locate)
+
+
+        def disk_usage(self, path):
+                """传入一个路径，计算所占磁盘使用率"""
+                if not os.path.exists(path): return '0' 
+                st = os.statvfs(path)
+                free = st.f_bavail * st.f_frsize
+                total = st.f_blocks * st.f_frsize
+                used = (st.f_blocks - st.f_bfree) * st.f_frsize
+                return  '%.2f%%' % ((used / total) * 100)
+    
+        def send_mail(self, to_list, subject, content):
+                """邮件发送"""
+                frm = 'noreply' + '<' + self.email_user + '>' 
+                msg = MIMEText(content, _subtype='html', _charset='utf-8')
+                msg['Subject'] = subject
+                msg['From'] = frm 
+                msg['To'] = ';'.join(to_list)
+                try:
+                        client = smtplib.SMTP()
+                        client.connect(self.email_host, self.email_port)
+                        client.login(self.email_user, self.email_pass)
+                        client.sendmail(frm, to_list, msg.as_string())
+                        client.close()
+                except:
+                        pass
+        def run(self):
+                usage = self.disk_usage(self.mgr_squid_log_path)
+                if float(usage.strip('%')) >= 60:
+                        hostname, locate = self.get_host_info()
+                        content = '服务器位置 %s  #  主机名 %s  #  磁盘使用率 %s' % (locate, hostname, usage)
+        #               self.send_mail(self.email_to, 'Mgr Disk Usage Alert', content )
+                        self.clean_mgr(time_delta = 7 * 24 * 60 * 60)
+
+
+if __name__ == '__main__':
+        main = CleanMgrSquidLog()
+        main.run()
+                                                       
